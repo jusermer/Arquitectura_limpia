@@ -1,52 +1,119 @@
 """
 domain/models/medicion.py
+
+Entidad central del dominio. Representa una medición de gas.
+- Sin imports de librerías externas (pandas, sqlalchemy, pyodbc, etc.)
+- Sin lógica de persistencia ni de presentación
+- Solo estructura de datos + validaciones de negocio puras
 """
+
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
+from typing import Optional
+
+
+class EstadoMedicion(Enum):
+    """Estados posibles de una medición dentro del dominio."""
+    PENDIENTE   = "pendiente"    # recién ingresada, sin validar
+    VALIDA      = "valida"       # pasó todas las reglas de negocio
+    INVALIDA    = "invalida"     # falló una o más reglas
+    PROCESADA   = "procesada"   # ya fue cargada al sistema destino
 
 
 @dataclass
 class Medicion:
-    fecha         : datetime
-    punto_medida  : str
-    volumen_m3    : float
-    presion_psi   : float
+    """
+    Entidad de dominio: medición de gas.
+
+    Atributos
+    ---------
+    id_medicion     : Identificador único (str para no acoplar al tipo de BD).
+    equipo_id       : ID del equipo que registró la medición.
+    timestamp       : Momento exacto de la medición (UTC).
+    valor_kwh       : Valor energético medido en kWh.
+    presion_bar     : Presión registrada en bar.
+    temperatura_c   : Temperatura en grados Celsius.
+    unidad          : Unidad de medida del valor principal (default 'kWh').
+    estado          : Estado actual dentro del ciclo de vida del dominio.
+    errores         : Lista de mensajes de error acumulados durante validación.
+    """
+
+    id_medicion   : str
+    equipo_id     : str
+    timestamp     : datetime
+    valor_kwh     : float
+    presion_bar   : float
     temperatura_c : float
-    calidad_gas   : float
-    operador      : str
+    unidad        : str                  = "kWh"
+    estado        : EstadoMedicion       = EstadoMedicion.PENDIENTE
+    errores       : list[str]            = field(default_factory=list)
 
-    # Manejado externamente por reglas_validacion.py
-    # Solo se popula desde fuera, nunca desde los métodos de la entidad
-    errores: list[str] = field(default_factory=list, repr=False)
-
-    # Invariantes — solo evalúan, no acumulan errores
-    def fecha_valida(self) -> bool:
-        return datetime(2000, 1, 1) <= self.fecha <= datetime.utcnow()
+    # ------------------------------------------------------------------
+    # Reglas de negocio básicas (invariantes de la entidad)
+    # Reglas más complejas o que cruzan entidades van en domain/services/
+    # ------------------------------------------------------------------
 
     def es_valor_positivo(self) -> bool:
-        return self.volumen_m3 > 0
+        """El valor medido no puede ser negativo ni cero."""
+        return self.valor_kwh > 0
 
     def es_presion_valida(self) -> bool:
-        return 20 < self.presion_psi < 80
+        """La presión debe estar en un rango operacional razonable (0 – 200 bar)."""
+        return 0 < self.presion_bar <= 200
 
     def es_temperatura_valida(self) -> bool:
-        return -10 < self.temperatura_c < 60
+        """Temperatura operacional admitida: -40 °C a 150 °C."""
+        return -40 <= self.temperatura_c <= 150
 
-    def es_calidad_gas_valida(self) -> bool:
-        return 0.85 <= self.calidad_gas <= 1.0
+    def es_timestamp_valido(self) -> bool:
+        """El timestamp no puede ser una fecha futura."""
+        return self.timestamp <= datetime.utcnow()
+
+    # ------------------------------------------------------------------
+    # Transiciones de estado
+    # ------------------------------------------------------------------
+
+    def marcar_valida(self) -> None:
+        """Transiciona la medición al estado VALIDA y limpia errores previos."""
+        self.estado  = EstadoMedicion.VALIDA
+        self.errores = []
+
+    def marcar_invalida(self, motivos: list[str]) -> None:
+        """
+        Transiciona la medición al estado INVALIDA y registra los motivos.
+
+        Parameters
+        ----------
+        motivos : list[str]
+            Descripciones de las reglas que fallaron.
+        """
+        if not motivos:
+            raise ValueError("Se deben indicar los motivos de invalidación.")
+        self.estado  = EstadoMedicion.INVALIDA
+        self.errores = motivos
+
+    def marcar_procesada(self) -> None:
+        """
+        Transiciona al estado PROCESADA.
+        Solo se permite desde el estado VALIDA.
+        """
+        if self.estado is not EstadoMedicion.VALIDA:
+            raise ValueError(
+                f"Solo se puede procesar una medición válida. "
+                f"Estado actual: {self.estado.value}"
+            )
+        self.estado = EstadoMedicion.PROCESADA
+
+    # ------------------------------------------------------------------
+    # Utilidades
+    # ------------------------------------------------------------------
 
     def tiene_errores(self) -> bool:
         return len(self.errores) > 0
 
     def __str__(self) -> str:
         return (
-            f"Medicion("
-            f"fecha={self.fecha}, "
-            f"punto_medida='{self.punto_medida}', "
-            f"volumen_m3={self.volumen_m3}, "
-            f"presion_psi={self.presion_psi}, "
-            f"temperatura_c={self.temperatura_c}, "
-            f"calidad_gas={self.calidad_gas}, "
-            f"operador='{self.operador}'"
-            f")"
+            f"Medicion(id={self.id_medicion}, equipo={self.equipo_id}, "
+            f"valor={self.valor_kwh} {self.unidad}, estado={self.estado.value})"
         )
