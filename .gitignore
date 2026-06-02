@@ -1,0 +1,19 @@
+# Entorno virtual
+venv/
+
+# Cachés de Python
+__pycache__/
+*.pyc
+
+# Variables de entorno
+.env
+app/.env
+
+# Datos de entrada
+data/
+app/data/
+*.csv
+
+# Configuración de editor
+.vscode/
+.idea/
